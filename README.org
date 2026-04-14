@@ -255,6 +255,137 @@ Clone this repository and add it to your =load-path=:
 (anvil-server-start)
 #+end_src
 
+* Client setup — connecting your AI to Anvil
+
+After Anvil is running inside Emacs, you need to register it as
+an MCP server in your AI client (Claude Desktop, Claude Code CLI,
+or any other MCP-compatible client).
+
+The bridge is a small shell script (=anvil-stdio.sh=) that speaks
+JSON-RPC on stdio and forwards calls to your running Emacs daemon
+via =emacsclient=. Install it once per machine:
+
+#+begin_src
+M-x anvil-server-install
+#+end_src
+
+By default this places =anvil-stdio.sh= in your =user-emacs-directory=
+(typically =~/.emacs.d/=). You can change the destination with
+=M-x customize-variable RET anvil-server-install-directory=.
+
+*Prerequisite:* Emacs must be running as a daemon
+(=server-start= or =emacs --daemon=). Anvil connects to it via
+=emacsclient=.
+
+** Claude Desktop
+
+Config file location:
+
+| OS                | Path                                                                                        |
+|-------------------+---------------------------------------------------------------------------------------------|
+| macOS             | =~/Library/Application Support/Claude/claude_desktop_config.json=                           |
+| Linux             | =~/.config/Claude/claude_desktop_config.json=                                               |
+| Windows (regular) | =%APPDATA%\Claude\claude_desktop_config.json=                                               |
+| Windows (UWP)     | =%LOCALAPPDATA%\Packages\Claude_<id>\LocalCache\Roaming\Claude\claude_desktop_config.json= |
+
+*** macOS / Linux
+
+#+begin_src json
+{
+  "mcpServers": {
+    "anvil": {
+      "command": "/path/to/.emacs.d/anvil-stdio.sh",
+      "args": [
+        "--server-id=anvil",
+        "--init-function=anvil-enable",
+        "--stop-function=anvil-disable"
+      ]
+    }
+  }
+}
+#+end_src
+
+If your Emacs daemon uses a non-default socket directory, add
+=--socket=/path/to/server= to the =args= array.
+
+*** Windows
+
+Windows needs Git Bash to execute the shell script:
+
+#+begin_src json
+{
+  "mcpServers": {
+    "anvil": {
+      "command": "C:\\Program Files\\Git\\bin\\bash.exe",
+      "args": [
+        "C:/Users/<you>/.emacs.d/anvil-stdio.sh",
+        "--server-id=anvil",
+        "--init-function=anvil-enable",
+        "--stop-function=anvil-disable"
+      ]
+    }
+  }
+}
+#+end_src
+
+Restart Claude Desktop after editing the config.
+
+** Claude Code (CLI)
+
+The CLI stores its config in =~/.claude.json= mixed with chat
+history and other state — *do not overwrite the whole file*.
+Use the =claude mcp add= command to add only the server entry:
+
+#+begin_src sh
+claude mcp add -s user -t stdio anvil -- \
+  ~/.emacs.d/anvil-stdio.sh \
+  --server-id=anvil \
+  --init-function=anvil-enable \
+  --stop-function=anvil-disable
+#+end_src
+
+On Windows, replace the script path with the Git Bash invocation
+shown above (=command= = bash.exe, first =arg= = the script path).
+
+** Optional: register the worker pool too
+
+For workloads that benefit from out-of-band execution (large
+tangles, multi-MB org scans, byte-compile), Anvil's worker module
+runs sub-Emacs daemons. You can register one as a separate MCP
+server so the AI client can address it directly:
+
+#+begin_src json
+{
+  "mcpServers": {
+    "anvil": { ... main daemon ... },
+    "anvil-worker": {
+      "command": "/path/to/.emacs.d/anvil-stdio.sh",
+      "args": [
+        "--socket=/path/to/.emacs.d/server/anvil-worker",
+        "--server-id=anvil-worker"
+      ]
+    }
+  }
+}
+#+end_src
+
+Most users do not need this — Anvil's =worker= module dispatches
+heavy ops automatically over the main connection.
+
+** Verifying the connection
+
+Inside Emacs:
+
+| Command                       | What it shows                                  |
+|-------------------------------+------------------------------------------------|
+| =M-x anvil-describe-setup=    | Tools, resources, and example client config    |
+| =(anvil-server-status)=       | Main MCP server state (running / stopped)     |
+| =(anvil-worker-status)=       | Worker pool state                              |
+
+In your AI client: ask the agent to list its tools, or invoke a
+read-only one like =anvil-host-info=. If the call returns, the
+bridge is working.
+
 * Architecture
 
 #+begin_example
@@ -262,7 +393,7 @@ Clone this repository and add it to your =load-path=:
          |
     MCP (JSON-RPC via stdio)
          |
-  emacs-mcp-stdio.sh (bridge)
+    anvil-stdio.sh (bridge)
          |
     emacsclient → Emacs daemon
          |
