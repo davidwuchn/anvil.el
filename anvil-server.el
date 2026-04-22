@@ -951,11 +951,14 @@ virtual server-ids share the same handler pool."
               (context (list :id id)))
           (condition-case err
               (let*
-                  ;; Check if handler is defined before trying to get arglist
+                  ;; Check handler is callable before arglist lookup.  Use
+                  ;; `functionp' (not `fboundp') so wrapper lambdas returned
+                  ;; by e.g. `anvil-orchestrator--encode-handler' pass — the
+                  ;; bare `fboundp' call errored with "Wrong type argument:
+                  ;; symbolp" on every such handler, long after registration.
                   ((arglist
-                    (if (fboundp handler)
+                    (if (functionp handler)
                         (help-function-arglist handler t)
-                      ;; If undefined, signal early with proper error
                       (signal 'void-function (list handler))))
                    (expected-params '())
                    (required-params '())
